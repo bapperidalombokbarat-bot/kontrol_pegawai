@@ -28,3 +28,6 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## SIMPEG architecture
+- Keep personnel date, eligibility, allowance, and TPP calculations in a shared pure TypeScript module so the interface and rule tests use identical logic.
