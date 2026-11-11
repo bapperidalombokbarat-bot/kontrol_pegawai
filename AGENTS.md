@@ -31,3 +31,4 @@ use the editor.
 
 ## SIMPEG architecture
 - Keep personnel date, eligibility, allowance, and TPP calculations in a shared pure TypeScript module so the interface and rule tests use identical logic.
+- Provision the first administrator through the protected Cloud user-management flow, then leave public account creation disabled so personnel records remain restricted.
