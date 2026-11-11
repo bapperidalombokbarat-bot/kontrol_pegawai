@@ -68,7 +68,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Employee = {
   id: string;
@@ -86,6 +86,7 @@ type Employee = {
   job_class: number;
   status: string;
   is_demo: boolean;
+  created_at: string;
 };
 
 type Member = {
@@ -445,7 +446,8 @@ export function SimpegApp() {
   async function updatePromotion(employee: Employee) {
     const currentLog = promotionLogs.find((log) => log.employee_id === employee.id);
     const stages = ["Persiapan Berkas", "Pengusulan SIASN", "SK Terbit"];
-    const next = stages[(stages.indexOf(currentLog?.status ?? "") + 1) % stages.length] ?? stages[0];
+    const next = stages[(stages.indexOf(currentLog?.status ?? "") + 1) % stages.length];
+    if (!next) return;
     const result = await supabase.from("promotion_logs").insert({ employee_id: employee.id, status: next, effective_date: next === "SK Terbit" ? nextPromotionDate(employee.last_rank_tmt ?? TODAY(), TODAY()) : null });
     if (result.error) { setPageError(result.error.message); return; }
     const row = { employee_id: employee.id, status: next, effective_date: next === "SK Terbit" ? nextPromotionDate(employee.last_rank_tmt ?? TODAY(), TODAY()) : null };
@@ -519,13 +521,13 @@ export function SimpegApp() {
     setBackupBusy(true); setPageError("");
     try {
       const envelope = JSON.parse(await backupFile.text()) as Record<string, unknown>;
-      if (envelope.format !== "SIMPEG-BAPPERIDA-ENCRYPTED" || envelope.version !== 1 || envelope.algorithm !== "AES-256-GCM" || typeof envelope.salt !== "string" || typeof envelope.iv !== "string" || typeof envelope.ciphertext !== "string") throw new Error("Format berkas cadangan tidak dikenali.");
-      const salt = base64ToBytes(envelope.salt); const iv = base64ToBytes(envelope.iv); const ciphertext = base64ToBytes(envelope.ciphertext);
+      if (envelope["format"] !== "SIMPEG-BAPPERIDA-ENCRYPTED" || envelope["version"] !== 1 || envelope["algorithm"] !== "AES-256-GCM" || typeof envelope["salt"] !== "string" || typeof envelope["iv"] !== "string" || typeof envelope["ciphertext"] !== "string") throw new Error("Format berkas cadangan tidak dikenali.");
+      const salt = base64ToBytes(envelope["salt"]); const iv = base64ToBytes(envelope["iv"]); const ciphertext = base64ToBytes(envelope["ciphertext"]);
       const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(backupPassphrase), "PBKDF2", false, ["deriveKey"]);
       const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 310_000, hash: "SHA-256" }, material, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
       const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
       const backup = JSON.parse(new TextDecoder().decode(plaintext)) as Record<string, unknown>;
-      if (backup.format !== "SIMPEG-BAPPERIDA-BACKUP" || backup.version !== 1) throw new Error("Isi berkas cadangan tidak cocok dengan aplikasi.");
+      if (backup["format"] !== "SIMPEG-BAPPERIDA-BACKUP" || backup["version"] !== 1) throw new Error("Isi berkas cadangan tidak cocok dengan aplikasi.");
       const tables = ["employees", "family_members", "promotion_logs", "kgb_logs", "tpp_calculations"] as const;
       for (const table of tables) {
         const rows = backup[table];
@@ -534,12 +536,12 @@ export function SimpegApp() {
         const result = await supabase.from(table).upsert(rows as never[], { onConflict: "id" });
         if (result.error) throw result.error;
       }
-      if (session?.user && backup.profile && typeof backup.profile === "object") {
-        const savedProfile = backup.profile as Record<string, unknown>;
-        const profileResult = await supabase.from("profiles").upsert({ id: session.user.id, display_name: String(savedProfile.display_name ?? ""), job_title: String(savedProfile.job_title ?? "") });
+      if (session?.user && backup["profile"] && typeof backup["profile"] === "object") {
+        const savedProfile = backup["profile"] as Record<string, unknown>;
+        const profileResult = await supabase.from("profiles").upsert({ id: session.user.id, display_name: String(savedProfile["display_name"] ?? ""), job_title: String(savedProfile["job_title"] ?? "") });
         if (profileResult.error) throw profileResult.error;
       }
-      await supabase.from("backup_logs").insert({ operation: "pemulihan", file_name: backupFile.name, details: { created_at: backup.createdAt } });
+      await supabase.from("backup_logs").insert({ operation: "pemulihan", file_name: backupFile.name, details: typeof backup["createdAt"] === "string" ? { created_at: backup["createdAt"] } : {} });
       if (session?.user) await loadData(session.user.id);
       setBackupPassphrase(""); setBackupFile(null); setDialog(null); notify("Pemulihan selesai. Data cadangan telah digabungkan dengan data saat ini.");
     } catch (error) {
@@ -589,22 +591,18 @@ export function SimpegApp() {
             <div className="auth-card-overline">AKSES TERBATAS</div>
             <h2>{authMode === "masuk" ? "Selamat datang" : "Buat akun Anda"}</h2>
             <p className="auth-subtitle">{authMode === "masuk" ? "Masuk ke ruang kerja administrasi kepegawaian." : "Daftarkan email kedinasan untuk memulai."}</p>
-            <div className="auth-switch" role="tablist" aria-label="Pilihan akses">
-              <button type="button" role="tab" aria-selected={authMode === "masuk"} onClick={() => { setAuthMode("masuk"); setAuthError(""); setAuthNotice(""); }}>Masuk</button>
-              <button type="button" role="tab" aria-selected={authMode === "daftar"} onClick={() => { setAuthMode("daftar"); setAuthError(""); setAuthNotice(""); }}>Daftar akun</button>
-            </div>
+            <div className="auth-switch auth-switch-single" role="tablist" aria-label="Pilihan akses"><span role="tab" aria-selected="true">Masuk dengan aman</span></div>
             <form className="auth-fields" onSubmit={signIn}>
-              {authMode === "daftar" && <div className="field"><Label htmlFor="auth-name">Nama lengkap</Label><Input id="auth-name" autoComplete="name" value={authName} onChange={(event) => setAuthName(event.target.value)} required placeholder="Nama lengkap" /></div>}
               <div className="field"><Label htmlFor="auth-email">Alamat email</Label><Input id="auth-email" type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} required placeholder="nama@instansi.go.id" /></div>
-              <div className="field"><div className="field-label-row"><Label htmlFor="auth-password">Kata sandi</Label><KeyRound size={14} /></div><Input id="auth-password" type="password" autoComplete={authMode === "masuk" ? "current-password" : "new-password"} minLength={8} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required placeholder="Minimal 8 karakter" /></div>
+              <div className="field"><div className="field-label-row"><Label htmlFor="auth-password">Kata sandi</Label><KeyRound size={14} /></div><Input id="auth-password" type="password" autoComplete="current-password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required placeholder="Masukkan kata sandi" /></div>
               {authError && <Notice tone="danger">{authError}</Notice>}
               {authNotice && <Notice tone="success">{authNotice}</Notice>}
-              <Button type="submit" size="lg" className="auth-submit" disabled={busy}>{busy ? "Mohon tunggu…" : authMode === "masuk" ? "Masuk ke ruang kerja" : "Buat akun"}<ArrowRight size={16} /></Button>
+              <Button type="submit" size="lg" className="auth-submit" disabled={busy}>{busy ? "Mohon tunggu…" : "Masuk ke ruang kerja"}<ArrowRight size={16} /></Button>
             </form>
             <div className="auth-divider"><span />atau masuk dengan<span /></div>
             <div className="social-buttons">
-              <Button type="button" variant="outline" className="social-button" onClick={() => void signInSocial("google")}><GoogleMark />Lanjutkan dengan Google</Button>
-              <Button type="button" variant="outline" className="social-button" onClick={() => void signInSocial("lovable")}><span className="lovable-mark"><Sparkles size={16} /></span>Lanjutkan dengan Lovable</Button>
+              <Button type="button" variant="outline" className="social-button" onClick={() => void signInSocial("google")}><GoogleMark />Masuk dengan Google</Button>
+              <Button type="button" variant="outline" className="social-button" onClick={() => void signInSocial("lovable")}><span className="lovable-mark"><Sparkles size={16} /></span>Masuk dengan Lovable</Button>
             </div>
             <div className="auth-security"><ShieldCheck size={16} /><span>Sesi terlindungi dengan enkripsi dan pembatasan akses.</span></div>
           </div>
