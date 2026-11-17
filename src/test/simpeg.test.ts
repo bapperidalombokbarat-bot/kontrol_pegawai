@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   ageParts,
+  BIDANG_LIST,
   calculateTpp,
   familyBenefitSummary,
+  getEmployeeBidang,
   isChildEligible,
   nextPromotionDate,
   parseNip,
@@ -103,5 +105,18 @@ describe("aturan pemantauan kepegawaian", () => {
     expect(result.bpjs).toBe(35_000);
     expect(result.zakat).toBe(87_500);
     expect(result.net).toBe(3_202_500);
+  });
+
+  it("mengkategorikan pegawai ke bidang atau unit kerja yang sesuai", () => {
+    expect(BIDANG_LIST).toContain("Bidang PSDAIK");
+    expect(BIDANG_LIST).toContain("Sekretariat");
+    expect(BIDANG_LIST).toContain("Bidang RIDA");
+    expect(getEmployeeBidang({ position: "Kepala", unit_kerja: "" })).toBe("Pimpinan");
+    expect(getEmployeeBidang({ position: "Sekretaris", unit_kerja: "Sekretariat" })).toBe("Sekretariat");
+    expect(getEmployeeBidang({ position: "Kabid Riset dan Inovasi Daerah ( BRIDA)", unit_kerja: "" })).toBe("Bidang RIDA");
+    expect(getEmployeeBidang({ position: "Fasilitator Pemerintahan", unit_kerja: "Bidang RIDA" })).toBe("Bidang RIDA");
+    expect(getEmployeeBidang({ position: "Kabid Pemerintahan dan Pembangunan Manusia (P2M )", unit_kerja: "" })).toBe("Bidang P2M");
+    expect(getEmployeeBidang({ position: "Kabid Perencanaan, Evaluasi Pembangunan Daerah ( P2EPD )", unit_kerja: "" })).toBe("Bidang P2EPD");
+    expect(getEmployeeBidang({ position: "Kabid Perekonomian, Sumber Daya Alam Infrastruktur dan Kewilyahan (PSDAIK)", unit_kerja: "" })).toBe("Bidang PSDAIK");
   });
 });

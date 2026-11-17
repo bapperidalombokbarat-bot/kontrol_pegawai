@@ -31,15 +31,15 @@ export function parseNip(nip: string): ParsedNip | null {
   const month = Number(nip.slice(4, 6));
   const day = Number(nip.slice(6, 8));
   const appointmentYear = Number(nip.slice(8, 12));
-  const appointmentMonth = Number(nip.slice(12, 14));
+  const appointmentMonthRaw = Number(nip.slice(12, 14));
   const genderDigit = nip[14];
   const birth = new Date(Date.UTC(year, month - 1, day));
+  const isPppk = appointmentMonthRaw === 21;
   if (
     birth.getUTCFullYear() !== year ||
     birth.getUTCMonth() !== month - 1 ||
     birth.getUTCDate() !== day ||
-    appointmentMonth < 1 ||
-    appointmentMonth > 12 ||
+    (!isPppk && (appointmentMonthRaw < 1 || appointmentMonthRaw > 12)) ||
     (genderDigit !== "1" && genderDigit !== "2")
   ) {
     return null;
@@ -47,7 +47,7 @@ export function parseNip(nip: string): ParsedNip | null {
   return {
     birthDate: `${nip.slice(0, 4)}-${nip.slice(4, 6)}-${nip.slice(6, 8)}`,
     appointmentYear,
-    appointmentMonth,
+    appointmentMonth: isPppk ? 1 : appointmentMonthRaw,
     gender: genderDigit === "1" ? "Laki-laki" : "Perempuan",
   };
 }
@@ -224,4 +224,88 @@ export function rupiah(value: number) {
     currency: "IDR",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+export const BIDANG_LIST = [
+  "Sekretariat",
+  "Bidang PSDAIK",
+  "Bidang P2M",
+  "Bidang RIDA",
+  "Bidang P2EPD",
+  "Pimpinan",
+] as const;
+
+export type Bidang = (typeof BIDANG_LIST)[number];
+
+export function getEmployeeBidang(employee: { position?: string | null; unit_kerja?: string | null }): string {
+  const unit = (employee.unit_kerja || "").trim();
+  const pos = (employee.position || "").toUpperCase();
+
+  if (
+    unit === "Pimpinan" ||
+    unit === "Sekretariat" ||
+    unit === "Bidang PSDAIK" ||
+    unit === "Bidang P2M" ||
+    unit === "Bidang RIDA" ||
+    unit === "Bidang P2EPD"
+  ) {
+    return unit;
+  }
+  if (unit === "Bidang BRIDA") {
+    return "Bidang RIDA";
+  }
+
+  if (pos.includes("KEPALA") && !pos.includes("KABID") && !pos.includes("KASUBBAG")) {
+    return "Pimpinan";
+  }
+  if (
+    pos.includes("SEKRETARIS") ||
+    pos.includes("KASUBBAG") ||
+    pos.includes("SUBBAG") ||
+    pos.includes("KEPEGAWAIAN") ||
+    pos.includes("KEUANGAN") ||
+    pos.includes("SUBBAGIAN") ||
+    unit.toUpperCase().includes("SEKRETARIAT")
+  ) {
+    return "Sekretariat";
+  }
+  if (
+    pos.includes("PSDAIK") ||
+    pos.includes("PEREKONOMIAN") ||
+    unit.toUpperCase().includes("PSDAIK") ||
+    unit.toUpperCase().includes("SARANA") ||
+    unit.toUpperCase().includes("EKONOMI")
+  ) {
+    return "Bidang PSDAIK";
+  }
+  if (
+    pos.includes("P2M") ||
+    pos.includes("PEMBANGUNAN MANUSIA") ||
+    unit.toUpperCase().includes("P2M") ||
+    unit.toUpperCase().includes("SOSBUD")
+  ) {
+    return "Bidang P2M";
+  }
+  if (
+    pos.includes("RIDA") ||
+    pos.includes("BRIDA") ||
+    pos.includes("RISET") ||
+    pos.includes("INOVASI DAERAH") ||
+    unit.toUpperCase().includes("RIDA") ||
+    unit.toUpperCase().includes("BRIDA") ||
+    unit.toUpperCase().includes("LITBANG")
+  ) {
+    return "Bidang RIDA";
+  }
+  if (
+    pos.includes("P2EPD") ||
+    pos.includes("EVALUASI") ||
+    pos.includes("PENGENDALIAN") ||
+    unit.toUpperCase().includes("P2EPD") ||
+    unit.toUpperCase().includes("RENBANG")
+  ) {
+    return "Bidang P2EPD";
+  }
+
+  return unit || "Sekretariat";
 }

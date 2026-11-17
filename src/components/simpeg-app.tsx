@@ -10,6 +10,8 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   ClipboardList,
   Cloud,
@@ -19,6 +21,7 @@ import {
   FileKey2,
   FilePlus2,
   FileSpreadsheet,
+  Filter,
   Fingerprint,
   Heart,
   KeyRound,
@@ -37,13 +40,14 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
+import { db as supabase, isTursoEnabled } from "@/lib/database";
 import {
   ageParts,
+  BIDANG_LIST,
   birthdayWithinDays,
   calculateTpp,
   familyBenefitSummary,
+  getEmployeeBidang,
   idDate,
   isChildEligible,
   kgbDueDate,
@@ -72,6 +76,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Employee = {
   id: string;
+  no_urut?: number;
   nip: string;
   name: string;
   position: string;
@@ -86,7 +91,16 @@ type Employee = {
   job_class: number;
   status: string;
   is_demo: boolean;
-  created_at: string;
+  jenis_jabatan?: string;
+  jenjang_jabatan?: string;
+  tmt_jabatan?: string | null;
+  pendidikan_terakhir?: string;
+  diklat_struktural?: string;
+  diklat_fungsional?: string;
+  diklat_teknis?: string;
+  unit_kerja?: string;
+  unor_induk?: string;
+  created_at?: string;
 };
 
 type Member = {
@@ -129,6 +143,7 @@ type ViewKey = "ringkasan" | "pegawai" | "pangkat" | "kgb" | "kp4" | "tpp" | "ca
 type DialogKind = "employee" | "family" | "profile" | "backup" | "restore" | null;
 
 const EMPTY_EMPLOYEE: Omit<Employee, "id" | "is_demo"> = {
+  no_urut: 999,
   nip: "",
   name: "",
   position: "",
@@ -142,6 +157,15 @@ const EMPTY_EMPLOYEE: Omit<Employee, "id" | "is_demo"> = {
   tpp_basic: 0,
   job_class: 1,
   status: "Aktif",
+  jenis_jabatan: "Struktural",
+  jenjang_jabatan: "",
+  tmt_jabatan: null,
+  pendidikan_terakhir: "S1",
+  diklat_struktural: "",
+  diklat_fungsional: "",
+  diklat_teknis: "",
+  unit_kerja: "",
+  unor_induk: "Bapperida",
 };
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
@@ -231,6 +255,7 @@ export function SimpegApp() {
   const [familyForm, setFamilyForm] = useState({ employee_id: "", name: "", relationship: "anak" as "pasangan" | "anak", birth_date: "", marital_status: "belum_menikah", is_asn: false, is_working: false, student_certificate: false });
   const [profileForm, setProfileForm] = useState({ display_name: "", job_title: "" });
   const [search, setSearch] = useState("");
+  const [selectedBidang, setSelectedBidang] = useState<string>("all");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [pageError, setPageError] = useState("");
   const [success, setSuccess] = useState("");
@@ -251,7 +276,7 @@ export function SimpegApp() {
     const [roleResult, profileResult, employeesResult, membersResult, promotionsResult, kgbResult, tppResult] = await Promise.all([
       supabase.from("user_roles").select("role").eq("user_id", userId),
       supabase.from("profiles").select("id, display_name, job_title, avatar_url").eq("id", userId).maybeSingle(),
-      supabase.from("employees").select("*").order("name"),
+      supabase.from("employees").select("*").order("no_urut", { ascending: true }),
       supabase.from("family_members").select("*").order("birth_date"),
       supabase.from("promotion_logs").select("employee_id, status, effective_date").order("created_at", { ascending: false }),
       supabase.from("kgb_logs").select("employee_id, new_salary, effective_date, status").order("created_at", { ascending: false }),
@@ -265,7 +290,7 @@ export function SimpegApp() {
     setIsAdmin((roleResult.data ?? []).some((entry) => entry.role === "admin"));
     setProfile((profileResult.data as Profile | null) ?? null);
     setProfileForm({ display_name: profileResult.data?.display_name ?? "", job_title: profileResult.data?.job_title ?? "" });
-    setEmployees((employeesResult.data ?? []) as Employee[]);
+    setEmployees(((employeesResult.data ?? []) as Employee[]).sort((a, b) => (a.no_urut ?? 999) - (b.no_urut ?? 999)));
     setMembers((membersResult.data ?? []) as Member[]);
     setPromotionLogs((promotionsResult.data ?? []) as PromotionLog[]);
     setKgbLogs((kgbResult.data ?? []) as KgbLog[]);
@@ -296,7 +321,8 @@ export function SimpegApp() {
     function onShortcut(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        searchRef.current?.focus();
+        setView("pegawai");
+        setTimeout(() => searchRef.current?.focus(), 50);
       }
       if (event.key === "Escape") setMobileNavOpen(false);
     }
@@ -338,9 +364,22 @@ export function SimpegApp() {
 
   const filteredEmployees = useMemo(() => {
     const q = search.trim().toLocaleLowerCase("id-ID");
-    if (!q) return employees;
-    return employees.filter((employee) => `${employee.name} ${employee.nip} ${employee.position} ${employee.grade}`.toLocaleLowerCase("id-ID").includes(q));
-  }, [employees, search]);
+    let result = employees;
+
+    if (selectedBidang && selectedBidang !== "all") {
+      result = result.filter((employee) => getEmployeeBidang(employee) === selectedBidang);
+    }
+
+    if (q) {
+      result = result.filter((employee) =>
+        `${employee.name} ${employee.nip} ${employee.position} ${employee.grade} ${employee.unit_kerja ?? ""} ${employee.jenis_jabatan ?? ""} ${employee.pendidikan_terakhir ?? ""}`
+          .toLocaleLowerCase("id-ID")
+          .includes(q)
+      );
+    }
+
+    return result;
+  }, [employees, search, selectedBidang]);
 
   const selectedTppEmployee = employees.find((employee) => employee.id === tppEmployeeId) ?? employees[0] ?? null;
   const tppResult = selectedTppEmployee ? calculateTpp({
@@ -369,7 +408,7 @@ export function SimpegApp() {
 
   async function signInSocial(provider: "google" | "lovable") {
     setAuthError("");
-    const result = await lovable.auth.signInWithOAuth(provider, { redirect_uri: window.location.origin });
+    const result = await supabase.auth.signInOAuth(provider);
     if (result.error) setAuthError(result.error.message);
   }
 
@@ -379,36 +418,75 @@ export function SimpegApp() {
   }
 
   function openNewEmployee() {
-    setSelectedEmployee(null); setEmployeeForm({ ...EMPTY_EMPLOYEE }); setDialog("employee");
+    setSelectedEmployee(null);
+    setEmployeeForm({ ...EMPTY_EMPLOYEE, no_urut: employees.length + 1 });
+    setDialog("employee");
   }
 
   function openEditEmployee(employee: Employee) {
     setSelectedEmployee(employee);
+    let initialNip = employee.nip.replace(/\D/g, "");
+    if (initialNip.length === 19 && initialNip.endsWith("0001")) {
+      initialNip = initialNip.slice(0, 15) + "001";
+    }
     setEmployeeForm({
-      nip: employee.nip, name: employee.name, position: employee.position, rank: employee.rank, grade: employee.grade,
+      no_urut: employee.no_urut ?? 999,
+      nip: initialNip, name: employee.name, position: employee.position, rank: employee.rank, grade: employee.grade,
       employment_type: employee.employment_type, retirement_category: employee.retirement_category,
       last_rank_tmt: employee.last_rank_tmt, last_kgb_tmt: employee.last_kgb_tmt,
       base_salary: Number(employee.base_salary), tpp_basic: Number(employee.tpp_basic), job_class: employee.job_class, status: employee.status,
+      jenis_jabatan: employee.jenis_jabatan ?? "Struktural",
+      jenjang_jabatan: employee.jenjang_jabatan ?? "",
+      tmt_jabatan: employee.tmt_jabatan ?? null,
+      pendidikan_terakhir: employee.pendidikan_terakhir ?? "S1",
+      diklat_struktural: employee.diklat_struktural ?? "",
+      diklat_fungsional: employee.diklat_fungsional ?? "",
+      diklat_teknis: employee.diklat_teknis ?? "",
+      unit_kerja: employee.unit_kerja ?? "",
+      unor_induk: employee.unor_induk ?? "Bapperida",
     });
     setDialog("employee");
   }
 
   async function saveEmployee(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setPageError("");
-    const payload = {
-      ...employeeForm,
-      nip: employeeForm.nip.replace(/\s/g, ""),
-      base_salary: Number(employeeForm.base_salary), tpp_basic: Number(employeeForm.tpp_basic),
-      job_class: Number(employeeForm.job_class), updated_at: new Date().toISOString(),
-      ...(selectedEmployee ? {} : { is_demo: false }),
-    };
-    const result = selectedEmployee
-      ? await supabase.from("employees").update(payload).eq("id", selectedEmployee.id).select().single()
-      : await supabase.from("employees").insert(payload).select().single();
-    setBusy(false);
-    if (result.error) { setPageError(result.error.message); return; }
-    setEmployees((current) => selectedEmployee ? current.map((entry) => entry.id === selectedEmployee.id ? result.data as Employee : entry) : [...current, result.data as Employee].sort((a, b) => a.name.localeCompare(b.name, "id")));
-    setDialog(null); notify(selectedEmployee ? "Data pegawai berhasil diperbarui." : "Pegawai berhasil ditambahkan.");
+    event.preventDefault();
+    setBusy(true);
+    setPageError("");
+    try {
+      let cleanNip = employeeForm.nip.replace(/\D/g, "");
+      if (cleanNip.length === 19 && cleanNip.endsWith("0001")) {
+        cleanNip = cleanNip.slice(0, 15) + "001";
+      }
+      const payload = {
+        ...employeeForm,
+        no_urut: employeeForm.no_urut ? Number(employeeForm.no_urut) : undefined,
+        nip: cleanNip,
+        base_salary: Number(employeeForm.base_salary),
+        tpp_basic: Number(employeeForm.tpp_basic),
+        job_class: Number(employeeForm.job_class),
+        updated_at: new Date().toISOString(),
+        ...(selectedEmployee ? {} : { is_demo: false }),
+      };
+      const result = selectedEmployee
+        ? await supabase.from("employees").update(payload).eq("id", selectedEmployee.id).select().single()
+        : await supabase.from("employees").insert(payload).select().single();
+      if (result.error) {
+        setPageError(result.error.message || String(result.error));
+        return;
+      }
+      setEmployees((current) =>
+        (selectedEmployee
+          ? current.map((entry) => (entry.id === selectedEmployee.id ? (result.data as Employee) : entry))
+          : [...current, result.data as Employee]
+        ).sort((a, b) => (a.no_urut ?? 999) - (b.no_urut ?? 999))
+      );
+      setDialog(null);
+      notify(selectedEmployee ? "Data pegawai berhasil diperbarui." : "Pegawai berhasil ditambahkan.");
+    } catch (err: any) {
+      setPageError(err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function deleteEmployee(employee: Employee) {
@@ -588,10 +666,21 @@ export function SimpegApp() {
         </section>
         <section className="auth-form-panel">
           <div className="auth-card">
-            <div className="auth-card-overline">AKSES TERBATAS</div>
+            <div className="auth-card-overline">AKSES TERBATAS · {isTursoEnabled ? "TURSO DB ONLINE" : "MODE LOCALHOST"}</div>
             <h2>{authMode === "masuk" ? "Selamat datang" : "Buat akun Anda"}</h2>
-            <p className="auth-subtitle">{authMode === "masuk" ? "Masuk ke ruang kerja administrasi kepegawaian." : "Daftarkan email kedinasan untuk memulai."}</p>
-            <div className="auth-switch auth-switch-single" role="tablist" aria-label="Pilihan akses"><span role="tab" aria-selected="true">Masuk dengan aman</span></div>
+            <p className="auth-subtitle">{authMode === "masuk" ? (isTursoEnabled ? "Masuk ke ruang kerja terhubung Turso Cloud Database." : "Masuk ke ruang kerja administrasi kepegawaian (Mode Mandiri/Localhost).") : "Daftarkan email kedinasan untuk memulai."}</p>
+            <div style={{ marginBottom: "1rem" }}>
+              <Button
+                type="button"
+                size="lg"
+                style={{ width: "100%", backgroundColor: "#047857", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem" }}
+                onClick={() => void supabase.auth.signInWithPassword({ email: "admin@bapperida.lombokbarat.go.id" })}
+              >
+                <ShieldCheck size={18} />
+                <span>Masuk Cepat sebagai Admin</span>
+              </Button>
+            </div>
+            <div className="auth-divider"><span />atau masukkan akun<span /></div>
             <form className="auth-fields" onSubmit={signIn}>
               <div className="field"><Label htmlFor="auth-email">Alamat email</Label><Input id="auth-email" type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} required placeholder="nama@instansi.go.id" /></div>
               <div className="field"><div className="field-label-row"><Label htmlFor="auth-password">Kata sandi</Label><KeyRound size={14} /></div><Input id="auth-password" type="password" autoComplete="current-password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required placeholder="Masukkan kata sandi" /></div>
@@ -604,7 +693,7 @@ export function SimpegApp() {
               <Button type="button" variant="outline" className="social-button" onClick={() => void signInSocial("google")}><GoogleMark />Masuk dengan Google</Button>
               <Button type="button" variant="outline" className="social-button" onClick={() => void signInSocial("lovable")}><span className="lovable-mark"><Sparkles size={16} /></span>Masuk dengan Lovable</Button>
             </div>
-            <div className="auth-security"><ShieldCheck size={16} /><span>Sesi terlindungi dengan enkripsi dan pembatasan akses.</span></div>
+            <div className="auth-security"><ShieldCheck size={16} /><span>Mode Localhost: Data tersimpan secara mandiri &amp; aman di browser lokal.</span></div>
           </div>
         </section>
       </main>
@@ -640,7 +729,7 @@ export function SimpegApp() {
         <div className="sidebar-separator" />
         <button type="button" className={`nav-item ${view === "cadangan" ? "nav-item-active" : ""}`} onClick={() => { setView("cadangan"); setMobileNavOpen(false); }}><Database size={18} strokeWidth={1.8} /><span>Cadangan data</span></button>
         <div className="sidebar-spacer" />
-        <div className="sidebar-security"><span className="security-icon"><ShieldCheck size={16} /></span><div><strong>Data terlindungi</strong><small>Akses aman · Lovable Cloud</small></div><span className="online-dot" /></div>
+        <div className="sidebar-security"><span className="security-icon"><ShieldCheck size={16} /></span><div><strong>{isTursoEnabled ? "Turso DB Online" : "Mode Localhost"}</strong><small>{isTursoEnabled ? "Cloud libSQL Connected" : "Penyimpanan Lokal"}</small></div><span className="online-dot" /></div>
         <div className="sidebar-profile">
           <div className="profile-avatar">{(profile?.display_name || session.user.email || "A").slice(0, 1).toUpperCase()}</div>
           <div className="profile-copy"><strong>{profile?.display_name || session.user.email?.split("@")[0]}</strong><small>{profile?.job_title || "Administrator kepegawaian"}</small></div>
@@ -653,7 +742,39 @@ export function SimpegApp() {
           <Button variant="ghost" size="icon" className="mobile-menu" aria-label="Buka menu" onClick={() => setMobileNavOpen(true)}><Menu /></Button>
           <div className="breadcrumb"><span>SIMPEG</span><span className="breadcrumb-slash">/</span><strong>{PAGE_NAMES[view]}</strong></div>
           <div className="topbar-tools">
-            <div className="global-search"><Search size={16} /><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari pegawai atau NIP" aria-label="Cari pegawai atau NIP" /><kbd>Ctrl K</kbd></div>
+            {view === "pegawai" && (
+              <>
+                <div className="topbar-filter">
+                  <Filter size={15} />
+                  <select
+                    value={selectedBidang}
+                    onChange={(event) => setSelectedBidang(event.target.value)}
+                    aria-label="Filter per bidang"
+                  >
+                    <option value="all">Semua Bidang ({employees.length})</option>
+                    {BIDANG_LIST.map((bidang) => {
+                      const count = employees.filter((e) => getEmployeeBidang(e) === bidang).length;
+                      return (
+                        <option key={bidang} value={bidang}>
+                          {bidang} ({count})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div className="global-search">
+                  <Search size={16} />
+                  <input
+                    ref={searchRef}
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Cari pegawai atau NIP"
+                    aria-label="Cari pegawai atau NIP"
+                  />
+                  <kbd>Ctrl K</kbd>
+                </div>
+              </>
+            )}
             <Button variant="outline" size="sm" className="backup-quick" onClick={() => { setBackupPassphrase(""); setDialog("backup"); }}><ArrowDownToLine size={15} /><span>Cadangkan</span></Button>
             <Button variant="ghost" size="icon" className="topbar-avatar" aria-label="Buka profil" onClick={() => setDialog("profile")}><span>{(profile?.display_name || session.user.email || "A").slice(0, 1).toUpperCase()}</span></Button>
           </div>
@@ -697,7 +818,55 @@ export function SimpegApp() {
             </>
           )}
 
-          {view === "pegawai" && <><PageTitle eyebrow="PENGELOLAAN DATA" title="Data pegawai" subtitle="Data induk kepegawaian yang tersimpan aman di ruang kerja." action={<Button onClick={openNewEmployee}><Plus size={17} />Tambah pegawai</Button>} /><div className="panel data-panel"><div className="data-toolbar"><div className="result-count"><strong>{filteredEmployees.length}</strong> pegawai terdaftar{employees.some((employee) => employee.is_demo) && <span className="demo-marker">· Termasuk data contoh</span>}</div><div className="toolbar-search"><Search size={15} /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari nama, NIP, jabatan…" aria-label="Cari pada data pegawai" /></div></div><EmployeeTable employees={filteredEmployees} logs={promotionLogs} onEdit={openEditEmployee} onDelete={deleteEmployee} /></div><div className="section-note"><Fingerprint size={16} />Data contoh diberi penanda dan dapat dihapus kapan saja dari pengelolaan pegawai.<Button variant="ghost" size="sm" onClick={clearDemoData}>Hapus data contoh</Button></div></>}
+          {view === "pegawai" && (
+            <>
+              <PageTitle
+                eyebrow="PENGELOLAAN DATA"
+                title="Data pegawai"
+                subtitle="Data induk kepegawaian Bapperida Lombok Barat (Rekon Oktober 2026)."
+                action={<Button onClick={openNewEmployee}><Plus size={17} />Tambah pegawai</Button>}
+              />
+              <div className="panel data-panel">
+                <div className="data-toolbar">
+                  <div className="result-count">
+                    <strong>{filteredEmployees.length}</strong> pegawai terdaftar
+                    {selectedBidang !== "all" && (
+                      <span style={{ marginLeft: "6px", color: "var(--accent-teal)", fontWeight: 600 }}>
+                        · {selectedBidang}
+                      </span>
+                    )}
+                    {search && (
+                      <span style={{ marginLeft: "6px", color: "var(--accent-blue)", fontWeight: 600 }}>
+                        · Pencarian: &ldquo;{search}&rdquo;
+                      </span>
+                    )}
+                    {" "}({filteredEmployees.filter((e) => e.employment_type === "PNS").length} PNS · {filteredEmployees.filter((e) => e.employment_type === "PPPK").length} PPPK)
+                    {employees.some((employee) => employee.is_demo) && <span className="demo-marker">· Termasuk data contoh</span>}
+                  </div>
+                  {(selectedBidang !== "all" || search) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedBidang("all");
+                        setSearch("");
+                      }}
+                      style={{ fontSize: "11px", height: "30px", gap: "5px" }}
+                    >
+                      <X size={14} /> Reset Filter
+                    </Button>
+                  )}
+                </div>
+                <EmployeeTable employees={filteredEmployees} logs={promotionLogs} onEdit={openEditEmployee} onDelete={deleteEmployee} />
+              </div>
+              {employees.some((e) => e.is_demo) && (
+                <div className="section-note">
+                  <Fingerprint size={16} />Data contoh diberi penanda dan dapat dihapus kapan saja dari pengelolaan pegawai.
+                  <Button variant="ghost" size="sm" onClick={clearDemoData}>Hapus data contoh</Button>
+                </div>
+              )}
+            </>
+          )}
 
           {view === "pangkat" && <><PageTitle eyebrow="PEMANTAUAN KARIER" title="Kenaikan pangkat reguler" subtitle="Proyeksi setiap empat tahun mengikuti enam periode layanan BKN." /><div className="metric-grid compact-metrics"><Metric label="Persiapan berkas" value={memberCounts.promotionList.length} foot="Masa persiapan enam bulan" icon={ClipboardList} tone="amber" /><Metric label="Usulan berjalan" value={promotionLogs.filter((log) => log.status === "Pengusulan SIASN").length} foot="Dalam proses SIASN" icon={FileCheck2} tone="blue" /><Metric label="SK terbit" value={promotionLogs.filter((log) => log.status === "SK Terbit").length} foot="Tercatat di aplikasi" icon={BadgeCheck} tone="teal" /><Metric label="Siklus layanan" value="6 periode" foot="Feb · Apr · Jun · Agu · Okt · Des" icon={CalendarDays} tone="rose" /></div><div className="panel data-panel"><div className="panel-heading"><div><span className="section-kicker">DAFTAR PEMANTAUAN</span><h2>Proyeksi pegawai</h2></div></div><PromotionTable employees={filteredEmployees} logs={promotionLogs} onAdvance={updatePromotion} /></div></>}
 
@@ -713,7 +882,7 @@ export function SimpegApp() {
         </main>
       </div>
 
-      <Dialog open={dialog === "employee"} onOpenChange={(open) => !open && setDialog(null)}><DialogContent className="simpeg-dialog"><DialogHeader><DialogTitle>{selectedEmployee ? "Perbarui data pegawai" : "Tambah pegawai"}</DialogTitle><DialogDescription>Informasi NIP, jabatan, masa kerja, dan gaji pokok.</DialogDescription></DialogHeader><form onSubmit={saveEmployee} className="dialog-form"><div className="field"><Label htmlFor="employee-nip">NIP · 18 digit</Label><Input id="employee-nip" inputMode="numeric" maxLength={18} value={employeeForm.nip} onChange={(event) => setEmployeeForm((current) => ({ ...current, nip: event.target.value.replace(/\D/g, "").slice(0, 18) }))} required pattern="[0-9]{18}" placeholder="199005152019031005" />{employeeForm.nip.length === 18 && (employeeBirth ? <div className="nip-preview"><Check size={14} /><span>{formatDate(employeeBirth.birthDate)} · {employeeBirth.gender} · TMT {new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(employeeBirth.appointmentYear, employeeBirth.appointmentMonth - 1, 1)))}</span></div> : <div className="nip-preview nip-invalid"><X size={14} />NIP tidak valid. Periksa kembali 18 digitnya.</div>)}</div><div className="field"><Label htmlFor="employee-name">Nama lengkap</Label><Input id="employee-name" value={employeeForm.name} onChange={(event) => setEmployeeForm((current) => ({ ...current, name: event.target.value }))} required /></div><div className="field"><Label htmlFor="employee-position">Jabatan</Label><Input id="employee-position" value={employeeForm.position} onChange={(event) => setEmployeeForm((current) => ({ ...current, position: event.target.value }))} placeholder="Perencana Ahli Muda" /></div><div className="form-grid"><div className="field"><Label htmlFor="employee-rank">Pangkat</Label><Input id="employee-rank" value={employeeForm.rank} onChange={(event) => setEmployeeForm((current) => ({ ...current, rank: event.target.value }))} /></div><div className="field"><Label htmlFor="employee-grade">Golongan</Label><Input id="employee-grade" value={employeeForm.grade} onChange={(event) => setEmployeeForm((current) => ({ ...current, grade: event.target.value }))} placeholder="III/a" /></div><div className="field"><Label>Jenis pegawai</Label><Select value={employeeForm.employment_type} onValueChange={(value: "PNS" | "PPPK") => setEmployeeForm((current) => ({ ...current, employment_type: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PNS">PNS</SelectItem><SelectItem value="PPPK">PPPK</SelectItem></SelectContent></Select></div><div className="field"><Label>Kategori batas usia</Label><Select value={employeeForm.retirement_category} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, retirement_category: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="administrasi">Administrasi / ahli pertama</SelectItem><SelectItem value="pimpinan_tinggi">Pimpinan tinggi</SelectItem><SelectItem value="ahli_madya">Fungsional ahli madya</SelectItem><SelectItem value="ahli_utama">Fungsional ahli utama</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="employee-rank-tmt">TMT pangkat terakhir</Label><Input id="employee-rank-tmt" type="date" value={employeeForm.last_rank_tmt ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, last_rank_tmt: event.target.value || null }))} /></div><div className="field"><Label htmlFor="employee-kgb-tmt">TMT KGB terakhir</Label><Input id="employee-kgb-tmt" type="date" value={employeeForm.last_kgb_tmt ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, last_kgb_tmt: event.target.value || null }))} /></div><div className="field"><Label htmlFor="employee-salary">Gaji pokok (Rp)</Label><Input id="employee-salary" type="number" min={0} value={employeeForm.base_salary} onChange={(event) => setEmployeeForm((current) => ({ ...current, base_salary: Number(event.target.value) }))} /></div><div className="field"><Label htmlFor="employee-tpp">Pagu dasar TPP (Rp)</Label><Input id="employee-tpp" type="number" min={0} value={employeeForm.tpp_basic} onChange={(event) => setEmployeeForm((current) => ({ ...current, tpp_basic: Number(event.target.value) }))} /></div><div className="field"><Label htmlFor="employee-class">Kelas jabatan (1–15)</Label><Input id="employee-class" type="number" min={1} max={15} value={employeeForm.job_class} onChange={(event) => setEmployeeForm((current) => ({ ...current, job_class: Number(event.target.value) }))} /></div><div className="field"><Label>Status</Label><Select value={employeeForm.status} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, status: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Aktif">Aktif</SelectItem><SelectItem value="Cuti">Cuti</SelectItem><SelectItem value="Nonaktif">Nonaktif</SelectItem></SelectContent></Select></div></div>{employeeBirth && <div className="derived-details"><div><span>TANGGAL LAHIR</span><strong>{formatDate(employeeBirth.birthDate)}</strong></div><div><span>USIA SAAT INI</span><strong>{(() => { const age = ageParts(employeeBirth.birthDate, today); return `${age.years} th ${age.months} bln`; })()}</strong></div><div><span>BATAS USIA PENSIUN</span><strong>{retirementAge(employeeForm.retirement_category)} tahun</strong></div><div><span>PERKIRAAN TMT PENSIUN</span><strong>{formatDate(retirementDate(employeeBirth.birthDate, employeeForm.retirement_category))}</strong></div></div>}<DialogFooter><Button type="button" variant="outline" onClick={() => setDialog(null)}>Batal</Button><Button type="submit" disabled={busy || (employeeForm.nip.length === 18 && !employeeBirth)}>{busy ? "Menyimpan…" : selectedEmployee ? "Simpan perubahan" : "Simpan pegawai"}</Button></DialogFooter></form></DialogContent></Dialog>
+      <Dialog open={dialog === "employee"} onOpenChange={(open) => !open && setDialog(null)}><DialogContent className="simpeg-dialog"><DialogHeader><DialogTitle>{selectedEmployee ? "Perbarui data pegawai" : "Tambah pegawai"}</DialogTitle><DialogDescription>Informasi NIP, jabatan, unit kerja, masa kerja, dan gaji pokok.</DialogDescription></DialogHeader><form onSubmit={saveEmployee} className="dialog-form"><div className="form-grid"><div className="field" style={{ maxWidth: "120px" }}><Label htmlFor="employee-no-urut">No. Urut</Label><Input id="employee-no-urut" type="number" min={1} value={employeeForm.no_urut ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, no_urut: event.target.value ? Number(event.target.value) : undefined }))} placeholder="1" /></div><div className="field" style={{ flex: 1 }}><Label htmlFor="employee-nip">NIP · 18 digit</Label><Input id="employee-nip" inputMode="numeric" maxLength={18} value={employeeForm.nip} onChange={(event) => { let val = event.target.value.replace(/\D/g, ""); if (val.length === 19 && val.endsWith("0001")) { val = val.slice(0, 15) + "001"; } setEmployeeForm((current) => ({ ...current, nip: val.slice(0, 18) })); }} required pattern="[0-9]{18}" placeholder="199005152019031005" /></div></div>{employeeForm.nip.length === 18 && (employeeBirth ? <div className="nip-preview"><Check size={14} /><span>{formatDate(employeeBirth.birthDate)} · {employeeBirth.gender} · TMT {new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(employeeBirth.appointmentYear, employeeBirth.appointmentMonth - 1, 1)))}</span></div> : <div className="nip-preview nip-invalid"><X size={14} />NIP tidak valid. Periksa kembali 18 digitnya.</div>)}<div className="field"><Label htmlFor="employee-name">Nama lengkap</Label><Input id="employee-name" value={employeeForm.name} onChange={(event) => setEmployeeForm((current) => ({ ...current, name: event.target.value }))} required /></div><div className="form-grid"><div className="field"><Label htmlFor="employee-position">Nama jabatan</Label><Input id="employee-position" value={employeeForm.position} onChange={(event) => setEmployeeForm((current) => ({ ...current, position: event.target.value }))} placeholder="Perencana Ahli Muda" /></div><div className="field"><Label>Unit kerja / Bidang</Label><Select value={employeeForm.unit_kerja ?? "Sekretariat"} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, unit_kerja: value }))}><SelectTrigger><SelectValue placeholder="Pilih unit kerja / bidang" /></SelectTrigger><SelectContent>{BIDANG_LIST.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent></Select></div></div><div className="form-grid"><div className="field"><Label htmlFor="employee-rank">Pangkat</Label><Input id="employee-rank" value={employeeForm.rank} onChange={(event) => setEmployeeForm((current) => ({ ...current, rank: event.target.value }))} /></div><div className="field"><Label htmlFor="employee-grade">Golongan</Label><Input id="employee-grade" value={employeeForm.grade} onChange={(event) => setEmployeeForm((current) => ({ ...current, grade: event.target.value }))} placeholder="III/a" /></div><div className="field"><Label>Jenis jabatan</Label><Select value={employeeForm.jenis_jabatan ?? "Struktural"} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, jenis_jabatan: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Setruktural">Struktural</SelectItem><SelectItem value="Fungsional Tertentu">Fungsional Tertentu</SelectItem><SelectItem value="Fungsional  Umum">Fungsional Umum</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="employee-edu">Pendidikan terakhir</Label><Input id="employee-edu" value={employeeForm.pendidikan_terakhir ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, pendidikan_terakhir: event.target.value }))} placeholder="S2 / S1 / D3 / SMA" /></div><div className="field"><Label>Jenis pegawai</Label><Select value={employeeForm.employment_type} onValueChange={(value: "PNS" | "PPPK") => setEmployeeForm((current) => ({ ...current, employment_type: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PNS">PNS</SelectItem><SelectItem value="PPPK">PPPK</SelectItem></SelectContent></Select></div><div className="field"><Label>Kategori batas usia</Label><Select value={employeeForm.retirement_category} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, retirement_category: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="administrasi">Administrasi / ahli pertama</SelectItem><SelectItem value="pimpinan_tinggi">Pimpinan tinggi</SelectItem><SelectItem value="ahli_madya">Fungsional ahli madya</SelectItem><SelectItem value="ahli_utama">Fungsional ahli utama</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="employee-rank-tmt">TMT pangkat terakhir</Label><Input id="employee-rank-tmt" type="date" value={employeeForm.last_rank_tmt ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, last_rank_tmt: event.target.value || null }))} /></div><div className="field"><Label htmlFor="employee-kgb-tmt">TMT KGB terakhir</Label><Input id="employee-kgb-tmt" type="date" value={employeeForm.last_kgb_tmt ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, last_kgb_tmt: event.target.value || null }))} /></div><div className="field"><Label htmlFor="employee-salary">Gaji pokok (Rp)</Label><Input id="employee-salary" type="number" min={0} value={employeeForm.base_salary} onChange={(event) => setEmployeeForm((current) => ({ ...current, base_salary: Number(event.target.value) }))} /></div><div className="field"><Label htmlFor="employee-tpp">Pagu dasar TPP (Rp)</Label><Input id="employee-tpp" type="number" min={0} value={employeeForm.tpp_basic} onChange={(event) => setEmployeeForm((current) => ({ ...current, tpp_basic: Number(event.target.value) }))} /></div><div className="field"><Label htmlFor="employee-class">Kelas jabatan (1–15)</Label><Input id="employee-class" type="number" min={1} max={15} value={employeeForm.job_class} onChange={(event) => setEmployeeForm((current) => ({ ...current, job_class: Number(event.target.value) }))} /></div><div className="field"><Label>Status</Label><Select value={employeeForm.status} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, status: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Aktif">Aktif</SelectItem><SelectItem value="Cuti">Cuti</SelectItem><SelectItem value="Nonaktif">Nonaktif</SelectItem></SelectContent></Select></div></div>{employeeBirth && <div className="derived-details"><div><span>TANGGAL LAHIR</span><strong>{formatDate(employeeBirth.birthDate)}</strong></div><div><span>USIA SAAT INI</span><strong>{(() => { const age = ageParts(employeeBirth.birthDate, today); return `${age.years} th ${age.months} bln`; })()}</strong></div><div><span>BATAS USIA PENSIUN</span><strong>{retirementAge(employeeForm.retirement_category)} tahun</strong></div><div><span>PERKIRAAN TMT PENSIUN</span><strong>{formatDate(retirementDate(employeeBirth.birthDate, employeeForm.retirement_category))}</strong></div></div>}<DialogFooter><Button type="button" variant="outline" onClick={() => setDialog(null)}>Batal</Button><Button type="submit" disabled={busy || (employeeForm.nip.length === 18 && !employeeBirth)}>{busy ? "Menyimpan…" : selectedEmployee ? "Simpan perubahan" : "Simpan pegawai"}</Button></DialogFooter></form></DialogContent></Dialog>
 
       <Dialog open={dialog === "family"} onOpenChange={(open) => !open && setDialog(null)}><DialogContent className="simpeg-dialog"><DialogHeader><DialogTitle>Tambah tanggungan keluarga</DialogTitle><DialogDescription>Lengkapi data sesuai dokumen administrasi keluarga.</DialogDescription></DialogHeader><form onSubmit={saveFamily} className="dialog-form"><div className="field"><Label>Pegawai</Label><Select value={familyForm.employee_id} onValueChange={(value) => setFamilyForm((current) => ({ ...current, employee_id: value }))}><SelectTrigger><SelectValue placeholder="Pilih pegawai" /></SelectTrigger><SelectContent>{employees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name}</SelectItem>)}</SelectContent></Select></div><div className="field"><Label htmlFor="family-name">Nama anggota keluarga</Label><Input id="family-name" value={familyForm.name} onChange={(event) => setFamilyForm((current) => ({ ...current, name: event.target.value }))} required /></div><div className="form-grid"><div className="field"><Label>Hubungan</Label><Select value={familyForm.relationship} onValueChange={(value: "pasangan" | "anak") => setFamilyForm((current) => ({ ...current, relationship: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pasangan">Suami / istri</SelectItem><SelectItem value="anak">Anak</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="family-birth">Tanggal lahir</Label><Input id="family-birth" type="date" value={familyForm.birth_date} onChange={(event) => setFamilyForm((current) => ({ ...current, birth_date: event.target.value }))} required /></div></div>{familyForm.relationship === "pasangan" ? <label className="toggle-line"><input type="checkbox" checked={familyForm.is_asn} onChange={(event) => setFamilyForm((current) => ({ ...current, is_asn: event.target.checked }))} /><span><strong>Pasangan berstatus ASN</strong><small>Mencegah klaim tunjangan ganda</small></span><span className={`fake-switch ${familyForm.is_asn ? "switch-on" : ""}`} /></label> : <><div className="field"><Label>Status perkawinan anak</Label><Select value={familyForm.marital_status} onValueChange={(value) => setFamilyForm((current) => ({ ...current, marital_status: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="belum_menikah">Belum menikah</SelectItem><SelectItem value="menikah">Sudah menikah</SelectItem></SelectContent></Select></div><label className="toggle-line"><input type="checkbox" checked={familyForm.is_working} onChange={(event) => setFamilyForm((current) => ({ ...current, is_working: event.target.checked }))} /><span><strong>Anak telah bekerja</strong><small>Anak bekerja tidak memenuhi syarat</small></span><span className={`fake-switch ${familyForm.is_working ? "switch-on" : ""}`} /></label><label className="toggle-line"><input type="checkbox" checked={familyForm.student_certificate} onChange={(event) => setFamilyForm((current) => ({ ...current, student_certificate: event.target.checked }))} /><span><strong>Surat keterangan kuliah tersedia</strong><small>Untuk anak di atas 21 sampai 25 tahun</small></span><span className={`fake-switch ${familyForm.student_certificate ? "switch-on" : ""}`} /></label></>}<DialogFooter><Button type="button" variant="outline" onClick={() => setDialog(null)}>Batal</Button><Button type="submit" disabled={busy || !familyForm.employee_id}>{busy ? "Menyimpan…" : "Simpan tanggungan"}</Button></DialogFooter></form></DialogContent></Dialog>
 
@@ -760,11 +929,203 @@ function PageTitle({ eyebrow, title, subtitle, action }: { eyebrow: string; titl
 }
 
 function EmployeeTable({ employees, logs, onEdit, onDelete, compact = false }: { employees: Employee[]; logs: PromotionLog[]; onEdit: (employee: Employee) => void; onDelete: (employee: Employee) => void; compact?: boolean }) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const totalPages = Math.max(1, Math.ceil(employees.length / pageSize));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   if (employees.length === 0) return <EmptyState icon={UsersRound} title="Belum ada pegawai" detail="Tambahkan data pegawai baru atau sesuaikan pencarian Anda." />;
-  return <div className="table-scroll"><table className="data-table"><thead><tr><th>PEGAWAI</th><th>NIP</th><th>PANGKAT / GOL.</th>{!compact && <><th>JABATAN</th><th>STATUS</th></>}<th>TMT TERAKHIR</th><th aria-label="Aksi" /></tr></thead><tbody>{employees.map((employee) => {
-    const stage = logs.find((log) => log.employee_id === employee.id)?.status;
-    return <tr key={employee.id}><td><div className="table-person"><span className="table-avatar">{employee.name.slice(0, 1)}</span><span><strong>{employee.name}{employee.is_demo && <sup className="demo-sup">CONTOH</sup>}</strong><small>{employee.employment_type} · Kelas {employee.job_class}</small></span></div></td><td className="mono-cell">{employee.nip}</td><td><strong>{employee.rank || "—"}</strong><small className="table-secondary">Golongan {employee.grade}</small></td>{!compact && <><td>{employee.position || "—"}</td><td><StatusPill tone={employee.status === "Aktif" ? "success" : "neutral"}>{employee.status}</StatusPill></td></>}<td><span>{employee.last_rank_tmt ? formatDate(employee.last_rank_tmt) : "Belum diisi"}</span>{!compact && stage && <small className="table-secondary">{stage}</small>}</td><td><div className="row-actions"><Button variant="ghost" size="icon" aria-label={`Ubah ${employee.name}`} title="Ubah data" onClick={() => onEdit(employee)}><Pencil size={15} /></Button><Button variant="ghost" size="icon" aria-label={`Hapus ${employee.name}`} title="Hapus data" onClick={() => onDelete(employee)}><Trash2 size={15} /></Button></div></td></tr>;
-  })}</tbody></table></div>;
+
+  const startIndex = (currentPage - 1) * pageSize;
+  const displayedEmployees = compact ? employees : employees.slice(startIndex, startIndex + pageSize);
+
+  const pageNumbers: (number | "ellipsis")[] = [];
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pageNumbers.push(i);
+  } else {
+    pageNumbers.push(1);
+    if (currentPage > 3) pageNumbers.push("ellipsis");
+    const start = Math.max(2, currentPage - 1);
+    const end = Math.min(totalPages - 1, currentPage + 1);
+    for (let i = start; i <= end; i++) pageNumbers.push(i);
+    if (currentPage < totalPages - 2) pageNumbers.push("ellipsis");
+    pageNumbers.push(totalPages);
+  }
+
+  return (
+    <>
+      <div className="table-scroll">
+        <table className="data-table">
+          <thead>
+            <tr>
+              {!compact && <th style={{ width: "48px", textAlign: "center" }}>NO</th>}
+              <th>PEGAWAI</th>
+              <th>NIP</th>
+              <th>PANGKAT / GOL.</th>
+              {!compact && <><th>JABATAN &amp; UNIT</th><th>STATUS</th></>}
+              <th>TMT TERAKHIR</th>
+              <th aria-label="Aksi" />
+            </tr>
+          </thead>
+          <tbody>
+            {displayedEmployees.map((employee, index) => {
+              const stage = logs.find((log) => log.employee_id === employee.id)?.status;
+              return (
+                <tr key={employee.id}>
+                  {!compact && (
+                    <td style={{ textAlign: "center", fontWeight: "600", color: "var(--muted-foreground)" }}>
+                      {employee.no_urut ?? (startIndex + index + 1)}
+                    </td>
+                  )}
+                  <td>
+                    <div className="table-person">
+                      <span className="table-avatar">{employee.name.slice(0, 1)}</span>
+                      <span>
+                        <strong>{employee.name}{employee.is_demo && <sup className="demo-sup">CONTOH</sup>}</strong>
+                        <small>{employee.employment_type} · Kelas {employee.job_class}</small>
+                      </span>
+                    </div>
+                  </td>
+                  <td className="mono-cell">{employee.nip}</td>
+                  <td>
+                    <strong>{employee.rank || "—"}</strong>
+                    <small className="table-secondary">Golongan {employee.grade}{employee.pendidikan_terakhir ? ` · ${employee.pendidikan_terakhir}` : ""}</small>
+                  </td>
+                  {!compact && (
+                    <>
+                      <td>
+                        <strong>{employee.position || "—"}</strong>
+                        <small className="table-secondary">{employee.unit_kerja ? `${employee.unit_kerja} · ` : ""}{employee.jenis_jabatan || ""}</small>
+                      </td>
+                      <td>
+                        <StatusPill tone={employee.status === "Aktif" ? "success" : "neutral"}>{employee.status}</StatusPill>
+                      </td>
+                    </>
+                  )}
+                  <td>
+                    <span>{employee.last_rank_tmt ? formatDate(employee.last_rank_tmt) : "Belum diisi"}</span>
+                    {!compact && stage && <small className="table-secondary">{stage}</small>}
+                  </td>
+                  <td>
+                    <div className="row-actions">
+                      <Button variant="ghost" size="icon" aria-label={`Ubah ${employee.name}`} title="Ubah data" onClick={() => onEdit(employee)}>
+                        <Pencil size={15} />
+                      </Button>
+                      <Button variant="ghost" size="icon" aria-label={`Hapus ${employee.name}`} title="Hapus data" onClick={() => onDelete(employee)}>
+                        <Trash2 size={15} />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {!compact && employees.length > 0 && (
+        <div
+          className="table-pagination-footer"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "12px",
+            padding: "12px 16px",
+            borderTop: "1px solid var(--border)",
+            fontSize: "12px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "14px", color: "var(--muted-foreground)" }}>
+            <span>
+              Menampilkan <strong style={{ color: "var(--foreground)" }}>{startIndex + 1}</strong>–
+              <strong style={{ color: "var(--foreground)" }}>{Math.min(startIndex + pageSize, employees.length)}</strong>{" "}
+              dari <strong style={{ color: "var(--foreground)" }}>{employees.length}</strong> pegawai
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>Baris per halaman:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                style={{
+                  padding: "3px 8px",
+                  borderRadius: "6px",
+                  border: "1px solid var(--border)",
+                  background: "var(--background)",
+                  color: "var(--foreground)",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                <option value={10}>10</option>
+                <option value={15}>15</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>Semua ({employees.length})</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage <= 1}
+              onClick={() => setPage(currentPage - 1)}
+              style={{ height: "30px", padding: "0 10px", gap: "4px", fontSize: "11px" }}
+            >
+              <ChevronLeft size={14} /> Sebelumnya
+            </Button>
+
+            {pageNumbers.map((item, idx) =>
+              item === "ellipsis" ? (
+                <span key={`ellipsis-${idx}`} style={{ padding: "0 4px", color: "var(--muted-foreground)" }}>
+                  …
+                </span>
+              ) : (
+                <Button
+                  key={item}
+                  variant={currentPage === item ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setPage(item)}
+                  style={{
+                    height: "30px",
+                    minWidth: "30px",
+                    padding: "0 6px",
+                    fontSize: "11px",
+                    fontWeight: currentPage === item ? 700 : 500,
+                  }}
+                >
+                  {item}
+                </Button>
+              )
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage(currentPage + 1)}
+              style={{ height: "30px", padding: "0 10px", gap: "4px", fontSize: "11px" }}
+            >
+              Selanjutnya <ChevronRight size={14} />
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 function PromotionTable({ employees, logs, onAdvance }: { employees: Employee[]; logs: PromotionLog[]; onAdvance: (employee: Employee) => void }) {

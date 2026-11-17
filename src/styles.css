@@ -275,6 +275,10 @@
 .breadcrumb strong { color: var(--foreground); font-weight: 650; }
 .breadcrumb-slash { color: var(--border); }
 .topbar-tools { display: flex; align-items: center; gap: 12px; }
+.topbar-filter { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 10px; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); }
+.topbar-filter svg { flex: none; color: var(--accent-teal); }
+.topbar-filter select { height: 100%; border: 0; outline: 0; color: var(--foreground); background: transparent; font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; }
+.topbar-filter select option { background: var(--surface); color: var(--foreground); }
 .global-search { width: min(30vw, 290px); min-width: 175px; height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 9px; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); }
 .global-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--foreground); background: transparent; font: inherit; font-size: 11px; }
 .global-search input::placeholder { color: var(--muted-foreground); }
