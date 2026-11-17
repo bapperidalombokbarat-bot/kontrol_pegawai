@@ -339,7 +339,7 @@ export function SimpegApp() {
     const birthdays = activeEmployees.flatMap((employee) => {
       const birthDate = employee.birth_date || parseNip(employee.nip)?.birthDate || (employee.nip.length >= 8 ? `${employee.nip.slice(0, 4)}-${employee.nip.slice(4, 6)}-${employee.nip.slice(6, 8)}` : null);
       if (!birthDate) return [];
-      const upcoming = birthdayWithinDays(birthDate, today, 60);
+      const upcoming = birthdayWithinDays(birthDate, today, 30);
       return upcoming ? [{ employee, birthDate, upcoming }] : [];
     }).sort((a, b) => a.upcoming.distance - b.upcoming.distance);
     const pensionList = activeEmployees.flatMap((employee) => {
@@ -854,8 +854,8 @@ export function SimpegApp() {
                       {memberCounts.birthdays.length === 0 && (
                         <EmptyState
                           icon={CalendarDays}
-                          title="Belum ada ulang tahun dalam 2 bulan ke depan"
-                          detail="Pegawai yang berulang tahun dalam 60 hari ke depan akan dipantau di sini."
+                          title="Belum ada ulang tahun dalam 1 bulan ke depan"
+                          detail="Pegawai yang berulang tahun dalam 30 hari ke depan akan dipantau di sini."
                         />
                       )}
                     </TabsContent>
@@ -882,11 +882,11 @@ export function SimpegApp() {
                   ) : (
                     <p className="birthday-copy">
                       {memberCounts.birthdays.length
-                        ? `${memberCounts.birthdays.length} pegawai akan berulang tahun dalam 2 bulan ke depan (EWS 60 hari aktif).`
-                        : "Semua jadwal penting pegawai tercatat dan siap dipantau."}
+                        ? `${memberCounts.birthdays.length} pegawai akan berulang tahun dalam 1 bulan ke depan (EWS 30 hari aktif).`
+                        : "Semua jadwal penting pegawai tercatat dan siap dipantau dalam 30 hari ke depan."}
                     </p>
                   )}
-                  <div className="birthday-footer"><span><span className="online-dot" /> EARLY WARNING (60 HARI)</span><span>{memberCounts.birthdays.length} terpantau</span></div>
+                  <div className="birthday-footer"><span><span className="online-dot" /> EARLY WARNING (30 HARI)</span><span>{memberCounts.birthdays.length} terpantau</span></div>
                 </section>
 
                 <section className="panel employees-panel"><div className="panel-heading"><div><span className="section-kicker">TERBARU</span><h2>Daftar pegawai</h2></div><Button variant="ghost" size="sm" className="text-link" onClick={() => setView("pegawai")}>Lihat semua<ArrowRight size={15} /></Button></div><EmployeeTable employees={recentEmployees} logs={promotionLogs} onEdit={openEditEmployee} onDelete={deleteEmployee} compact /></section>
