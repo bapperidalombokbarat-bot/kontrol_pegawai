@@ -809,7 +809,25 @@ export function SimpegApp() {
                   <div className="panel-heading"><div><span className="section-kicker">PERLU PERHATIAN</span><h2>Pusat pengingat</h2></div><span className="panel-date">Hari ini · {formatDate(today).split(",").slice(1).join(",").trim()}</span></div>
                   <Tabs defaultValue="pensiun" className="warning-tabs">
                     <TabsList className="warning-tab-list"><TabsTrigger value="pensiun">Pensiun <span>{memberCounts.pensionList.length}</span></TabsTrigger><TabsTrigger value="kgb">KGB <span>{memberCounts.kgbList.length}</span></TabsTrigger><TabsTrigger value="pangkat">Pangkat <span>{memberCounts.promotionList.length}</span></TabsTrigger><TabsTrigger value="ulang-tahun">Ulang tahun <span>{memberCounts.birthdays.length}</span></TabsTrigger></TabsList>
-                    <div className="warning-list">{memberCounts.pensionList.slice(0, 4).map(({ employee, date, tone }) => <div className="warning-row" key={employee.id}><span className={`warning-marker marker-${tone.toLowerCase()}`} /><div className="warning-main"><strong>{employee.name}</strong><span>{employee.position || employee.rank} · {formatDate(date)}</span></div><StatusPill tone={tone === "Kritis" ? "danger" : "warning"}>{tone}</StatusPill></div>)}{memberCounts.pensionList.length === 0 && <EmptyState icon={ShieldCheck} title="Belum ada pengingat pensiun" detail="Pegawai dengan jadwal pensiun dekat akan muncul di sini." />}</div>
+                    <TabsContent value="pensiun" className="warning-list">
+                      {memberCounts.pensionList.slice(0, 4).map(({ employee, date, tone }) => (
+                        <div className="warning-row" key={employee.id}>
+                          <span className={`warning-marker marker-${tone.toLowerCase()}`} />
+                          <div className="warning-main">
+                            <strong>{employee.name}</strong>
+                            <span>{employee.position || employee.rank} · {formatDate(date)}</span>
+                          </div>
+                          <StatusPill tone={tone === "Kritis" ? "danger" : "warning"}>{tone}</StatusPill>
+                        </div>
+                      ))}
+                      {memberCounts.pensionList.length === 0 && (
+                        <EmptyState
+                          icon={ShieldCheck}
+                          title="Belum ada pengingat pensiun"
+                          detail="Pegawai dengan jadwal pensiun dekat akan muncul di sini."
+                        />
+                      )}
+                    </TabsContent>
                     <TabsContent value="kgb" className="warning-list">{memberCounts.kgbList.map(({ employee, date, days }) => <div className="warning-row" key={employee.id}><span className="warning-marker marker-amber" /><div className="warning-main"><strong>{employee.name}</strong><span>{employee.grade} · {formatDate(date)}</span></div><StatusPill tone="warning">{days === 0 ? "Hari ini" : `${days} hari`}</StatusPill></div>)}{memberCounts.kgbList.length === 0 && <EmptyState icon={WalletCards} title="Belum ada KGB terdekat" detail="Jatuh tempo KGB dalam 90 hari akan terlihat di sini." />}</TabsContent>
                     <TabsContent value="pangkat" className="warning-list">{memberCounts.promotionList.map(({ employee, date, days }) => <div className="warning-row" key={employee.id}><span className="warning-marker marker-teal" /><div className="warning-main"><strong>{employee.name}</strong><span>{employee.grade} · periode {formatDate(date)}</span></div><StatusPill tone="info">{days} hari</StatusPill></div>)}{memberCounts.promotionList.length === 0 && <EmptyState icon={ArrowUpRight} title="Belum ada usul pangkat dekat" detail="Pegawai dalam enam bulan masa persiapan akan muncul di sini." />}</TabsContent>
                     <TabsContent value="ulang-tahun" className="warning-list">
