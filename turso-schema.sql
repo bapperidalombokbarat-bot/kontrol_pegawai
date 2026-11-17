@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS employees (
   rank TEXT NOT NULL DEFAULT '',
   grade TEXT NOT NULL DEFAULT '',
   employment_type TEXT NOT NULL DEFAULT 'PNS',
+  birth_date TEXT,
   retirement_category TEXT NOT NULL DEFAULT 'administrasi',
   last_rank_tmt TEXT,
   last_kgb_tmt TEXT,

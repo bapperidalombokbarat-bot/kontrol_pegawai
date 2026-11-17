@@ -78,6 +78,7 @@ type Employee = {
   id: string;
   no_urut?: number;
   nip: string;
+  birth_date?: string | null;
   name: string;
   position: string;
   rank: string;
@@ -145,6 +146,7 @@ type DialogKind = "employee" | "family" | "profile" | "backup" | "restore" | nul
 const EMPTY_EMPLOYEE: Omit<Employee, "id" | "is_demo"> = {
   no_urut: 999,
   nip: "",
+  birth_date: null,
   name: "",
   position: "",
   rank: "",
@@ -335,10 +337,10 @@ export function SimpegApp() {
   const memberCounts = useMemo(() => {
     const today = TODAY();
     const birthdays = activeEmployees.flatMap((employee) => {
-      const parsed = parseNip(employee.nip);
-      if (!parsed) return [];
-      const upcoming = birthdayWithinDays(parsed.birthDate, today, 7);
-      return upcoming ? [{ employee, parsed, upcoming }] : [];
+      const birthDate = employee.birth_date || parseNip(employee.nip)?.birthDate || (employee.nip.length >= 8 ? `${employee.nip.slice(0, 4)}-${employee.nip.slice(4, 6)}-${employee.nip.slice(6, 8)}` : null);
+      if (!birthDate) return [];
+      const upcoming = birthdayWithinDays(birthDate, today, 60);
+      return upcoming ? [{ employee, birthDate, upcoming }] : [];
     }).sort((a, b) => a.upcoming.distance - b.upcoming.distance);
     const pensionList = activeEmployees.flatMap((employee) => {
       const parsed = parseNip(employee.nip);
@@ -429,9 +431,13 @@ export function SimpegApp() {
     if (initialNip.length === 19 && initialNip.endsWith("0001")) {
       initialNip = initialNip.slice(0, 15) + "001";
     }
+    let initialBirthDate = employee.birth_date;
+    if (!initialBirthDate && initialNip.length >= 8) {
+      initialBirthDate = `${initialNip.slice(0, 4)}-${initialNip.slice(4, 6)}-${initialNip.slice(6, 8)}`;
+    }
     setEmployeeForm({
       no_urut: employee.no_urut ?? 999,
-      nip: initialNip, name: employee.name, position: employee.position, rank: employee.rank, grade: employee.grade,
+      nip: initialNip, birth_date: initialBirthDate, name: employee.name, position: employee.position, rank: employee.rank, grade: employee.grade,
       employment_type: employee.employment_type, retirement_category: employee.retirement_category,
       last_rank_tmt: employee.last_rank_tmt, last_kgb_tmt: employee.last_kgb_tmt,
       base_salary: Number(employee.base_salary), tpp_basic: Number(employee.tpp_basic), job_class: employee.job_class, status: employee.status,
@@ -457,8 +463,13 @@ export function SimpegApp() {
       if (cleanNip.length === 19 && cleanNip.endsWith("0001")) {
         cleanNip = cleanNip.slice(0, 15) + "001";
       }
+      let birthDate = employeeForm.birth_date;
+      if (!birthDate && cleanNip.length >= 8) {
+        birthDate = `${cleanNip.slice(0, 4)}-${cleanNip.slice(4, 6)}-${cleanNip.slice(6, 8)}`;
+      }
       const payload = {
         ...employeeForm,
+        birth_date: birthDate,
         no_urut: employeeForm.no_urut ? Number(employeeForm.no_urut) : undefined,
         nip: cleanNip,
         base_salary: Number(employeeForm.base_salary),
@@ -801,15 +812,63 @@ export function SimpegApp() {
                     <div className="warning-list">{memberCounts.pensionList.slice(0, 4).map(({ employee, date, tone }) => <div className="warning-row" key={employee.id}><span className={`warning-marker marker-${tone.toLowerCase()}`} /><div className="warning-main"><strong>{employee.name}</strong><span>{employee.position || employee.rank} · {formatDate(date)}</span></div><StatusPill tone={tone === "Kritis" ? "danger" : "warning"}>{tone}</StatusPill></div>)}{memberCounts.pensionList.length === 0 && <EmptyState icon={ShieldCheck} title="Belum ada pengingat pensiun" detail="Pegawai dengan jadwal pensiun dekat akan muncul di sini." />}</div>
                     <TabsContent value="kgb" className="warning-list">{memberCounts.kgbList.map(({ employee, date, days }) => <div className="warning-row" key={employee.id}><span className="warning-marker marker-amber" /><div className="warning-main"><strong>{employee.name}</strong><span>{employee.grade} · {formatDate(date)}</span></div><StatusPill tone="warning">{days === 0 ? "Hari ini" : `${days} hari`}</StatusPill></div>)}{memberCounts.kgbList.length === 0 && <EmptyState icon={WalletCards} title="Belum ada KGB terdekat" detail="Jatuh tempo KGB dalam 90 hari akan terlihat di sini." />}</TabsContent>
                     <TabsContent value="pangkat" className="warning-list">{memberCounts.promotionList.map(({ employee, date, days }) => <div className="warning-row" key={employee.id}><span className="warning-marker marker-teal" /><div className="warning-main"><strong>{employee.name}</strong><span>{employee.grade} · periode {formatDate(date)}</span></div><StatusPill tone="info">{days} hari</StatusPill></div>)}{memberCounts.promotionList.length === 0 && <EmptyState icon={ArrowUpRight} title="Belum ada usul pangkat dekat" detail="Pegawai dalam enam bulan masa persiapan akan muncul di sini." />}</TabsContent>
-                    <TabsContent value="ulang-tahun" className="warning-list">{memberCounts.birthdays.map(({ employee, parsed, upcoming }) => <div className="warning-row" key={employee.id}><span className="birthday-avatar">{employee.name.slice(0, 1)}</span><div className="warning-main"><strong>{employee.name}{upcoming.distance === 0 && <span className="birthday-today"> · Hari ini</span>}</strong><span>{parsed.birthDate.slice(8, 10)} {new Intl.DateTimeFormat("id-ID", { month: "long", timeZone: "UTC" }).format(new Date(`${parsed.birthDate}T00:00:00Z`))} · {upcoming.distance ? `dalam ${upcoming.distance} hari` : "Selamat ulang tahun!"}</span></div><span className="birthday-sparkle">✳</span></div>)}{memberCounts.birthdays.length === 0 && <EmptyState icon={CalendarDays} title="Belum ada ulang tahun pekan ini" detail="Ulang tahun dalam tujuh hari ke depan akan ditampilkan di sini." />}</TabsContent>
+                    <TabsContent value="ulang-tahun" className="warning-list">
+                      {memberCounts.birthdays.map(({ employee, birthDate, upcoming }) => {
+                        const age = ageParts(birthDate, today);
+                        return (
+                          <div className="warning-row" key={employee.id}>
+                            <span className="birthday-avatar">{employee.name.slice(0, 1)}</span>
+                            <div className="warning-main">
+                              <strong>
+                                {employee.name}
+                                {upcoming.distance === 0 && <span className="birthday-today"> · Hari ini</span>}
+                              </strong>
+                              <span>
+                                {formatDate(birthDate)} · Ke-{age.years + (upcoming.distance === 0 ? 0 : 1)} th · {upcoming.distance === 0 ? "Selamat ulang tahun!" : upcoming.distance === 1 ? "Besok" : `dalam ${upcoming.distance} hari`}
+                              </span>
+                            </div>
+                            <StatusPill tone={upcoming.distance <= 7 ? "danger" : upcoming.distance <= 30 ? "warning" : "info"}>
+                              {upcoming.distance === 0 ? "Hari ini 🎂" : `${upcoming.distance} hari`}
+                            </StatusPill>
+                          </div>
+                        );
+                      })}
+                      {memberCounts.birthdays.length === 0 && (
+                        <EmptyState
+                          icon={CalendarDays}
+                          title="Belum ada ulang tahun dalam 2 bulan ke depan"
+                          detail="Pegawai yang berulang tahun dalam 60 hari ke depan akan dipantau di sini."
+                        />
+                      )}
+                    </TabsContent>
                   </Tabs>
                 </section>
 
                 <section className="panel birthday-panel">
                   <div className="birthday-topline"><span className="birthday-symbol"><Sparkles size={18} /></span><span>RADAR HARI INI</span></div>
-                  <h2>{birthdaysToday.length > 0 ? "Selamat ulang tahun!" : "Hari ini di Lombok Barat"}</h2>
-                  {birthdaysToday.length > 0 ? <div className="birthday-card-list">{birthdaysToday.map(({ employee, parsed }) => <div key={employee.id} className="birthday-card"><div className="birthday-card-avatar">{employee.name.slice(0, 1)}</div><div><strong>{employee.name}</strong><small>{employee.position}</small><span>Semoga sehat dan sukses selalu.</span></div><span className="birthday-confetti">✳</span></div>)}</div> : <p className="birthday-copy">{memberCounts.birthdays.length ? `${memberCounts.birthdays.length} pegawai merayakan ulang tahun pekan ini.` : "Semua jadwal penting pegawai tercatat dan siap dipantau."}</p>}
-                  <div className="birthday-footer"><span><span className="online-dot" /> PEMANTAUAN AKTIF</span><span>{activeEmployees.length} pegawai</span></div>
+                  <h2>{birthdaysToday.length > 0 ? "Selamat ulang tahun!" : "Early Warning System"}</h2>
+                  {birthdaysToday.length > 0 ? (
+                    <div className="birthday-card-list">
+                      {birthdaysToday.map(({ employee, birthDate }) => (
+                        <div key={employee.id} className="birthday-card">
+                          <div className="birthday-card-avatar">{employee.name.slice(0, 1)}</div>
+                          <div>
+                            <strong>{employee.name}</strong>
+                            <small>{employee.position || employee.rank}</small>
+                            <span>Semoga sehat, berkah, dan sukses selalu. 🎂</span>
+                          </div>
+                          <span className="birthday-confetti">🎉</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="birthday-copy">
+                      {memberCounts.birthdays.length
+                        ? `${memberCounts.birthdays.length} pegawai akan berulang tahun dalam 2 bulan ke depan (EWS 60 hari aktif).`
+                        : "Semua jadwal penting pegawai tercatat dan siap dipantau."}
+                    </p>
+                  )}
+                  <div className="birthday-footer"><span><span className="online-dot" /> EARLY WARNING (60 HARI)</span><span>{memberCounts.birthdays.length} terpantau</span></div>
                 </section>
 
                 <section className="panel employees-panel"><div className="panel-heading"><div><span className="section-kicker">TERBARU</span><h2>Daftar pegawai</h2></div><Button variant="ghost" size="sm" className="text-link" onClick={() => setView("pegawai")}>Lihat semua<ArrowRight size={15} /></Button></div><EmployeeTable employees={recentEmployees} logs={promotionLogs} onEdit={openEditEmployee} onDelete={deleteEmployee} compact /></section>
@@ -882,7 +941,7 @@ export function SimpegApp() {
         </main>
       </div>
 
-      <Dialog open={dialog === "employee"} onOpenChange={(open) => !open && setDialog(null)}><DialogContent className="simpeg-dialog"><DialogHeader><DialogTitle>{selectedEmployee ? "Perbarui data pegawai" : "Tambah pegawai"}</DialogTitle><DialogDescription>Informasi NIP, jabatan, unit kerja, masa kerja, dan gaji pokok.</DialogDescription></DialogHeader><form onSubmit={saveEmployee} className="dialog-form"><div className="form-grid"><div className="field" style={{ maxWidth: "120px" }}><Label htmlFor="employee-no-urut">No. Urut</Label><Input id="employee-no-urut" type="number" min={1} value={employeeForm.no_urut ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, no_urut: event.target.value ? Number(event.target.value) : undefined }))} placeholder="1" /></div><div className="field" style={{ flex: 1 }}><Label htmlFor="employee-nip">NIP · 18 digit</Label><Input id="employee-nip" inputMode="numeric" maxLength={18} value={employeeForm.nip} onChange={(event) => { let val = event.target.value.replace(/\D/g, ""); if (val.length === 19 && val.endsWith("0001")) { val = val.slice(0, 15) + "001"; } setEmployeeForm((current) => ({ ...current, nip: val.slice(0, 18) })); }} required pattern="[0-9]{18}" placeholder="199005152019031005" /></div></div>{employeeForm.nip.length === 18 && (employeeBirth ? <div className="nip-preview"><Check size={14} /><span>{formatDate(employeeBirth.birthDate)} · {employeeBirth.gender} · TMT {new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(employeeBirth.appointmentYear, employeeBirth.appointmentMonth - 1, 1)))}</span></div> : <div className="nip-preview nip-invalid"><X size={14} />NIP tidak valid. Periksa kembali 18 digitnya.</div>)}<div className="field"><Label htmlFor="employee-name">Nama lengkap</Label><Input id="employee-name" value={employeeForm.name} onChange={(event) => setEmployeeForm((current) => ({ ...current, name: event.target.value }))} required /></div><div className="form-grid"><div className="field"><Label htmlFor="employee-position">Nama jabatan</Label><Input id="employee-position" value={employeeForm.position} onChange={(event) => setEmployeeForm((current) => ({ ...current, position: event.target.value }))} placeholder="Perencana Ahli Muda" /></div><div className="field"><Label>Unit kerja / Bidang</Label><Select value={employeeForm.unit_kerja ?? "Sekretariat"} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, unit_kerja: value }))}><SelectTrigger><SelectValue placeholder="Pilih unit kerja / bidang" /></SelectTrigger><SelectContent>{BIDANG_LIST.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent></Select></div></div><div className="form-grid"><div className="field"><Label htmlFor="employee-rank">Pangkat</Label><Input id="employee-rank" value={employeeForm.rank} onChange={(event) => setEmployeeForm((current) => ({ ...current, rank: event.target.value }))} /></div><div className="field"><Label htmlFor="employee-grade">Golongan</Label><Input id="employee-grade" value={employeeForm.grade} onChange={(event) => setEmployeeForm((current) => ({ ...current, grade: event.target.value }))} placeholder="III/a" /></div><div className="field"><Label>Jenis jabatan</Label><Select value={employeeForm.jenis_jabatan ?? "Struktural"} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, jenis_jabatan: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Setruktural">Struktural</SelectItem><SelectItem value="Fungsional Tertentu">Fungsional Tertentu</SelectItem><SelectItem value="Fungsional  Umum">Fungsional Umum</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="employee-edu">Pendidikan terakhir</Label><Input id="employee-edu" value={employeeForm.pendidikan_terakhir ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, pendidikan_terakhir: event.target.value }))} placeholder="S2 / S1 / D3 / SMA" /></div><div className="field"><Label>Jenis pegawai</Label><Select value={employeeForm.employment_type} onValueChange={(value: "PNS" | "PPPK") => setEmployeeForm((current) => ({ ...current, employment_type: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PNS">PNS</SelectItem><SelectItem value="PPPK">PPPK</SelectItem></SelectContent></Select></div><div className="field"><Label>Kategori batas usia</Label><Select value={employeeForm.retirement_category} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, retirement_category: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="administrasi">Administrasi / ahli pertama</SelectItem><SelectItem value="pimpinan_tinggi">Pimpinan tinggi</SelectItem><SelectItem value="ahli_madya">Fungsional ahli madya</SelectItem><SelectItem value="ahli_utama">Fungsional ahli utama</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="employee-rank-tmt">TMT pangkat terakhir</Label><Input id="employee-rank-tmt" type="date" value={employeeForm.last_rank_tmt ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, last_rank_tmt: event.target.value || null }))} /></div><div className="field"><Label htmlFor="employee-kgb-tmt">TMT KGB terakhir</Label><Input id="employee-kgb-tmt" type="date" value={employeeForm.last_kgb_tmt ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, last_kgb_tmt: event.target.value || null }))} /></div><div className="field"><Label htmlFor="employee-salary">Gaji pokok (Rp)</Label><Input id="employee-salary" type="number" min={0} value={employeeForm.base_salary} onChange={(event) => setEmployeeForm((current) => ({ ...current, base_salary: Number(event.target.value) }))} /></div><div className="field"><Label htmlFor="employee-tpp">Pagu dasar TPP (Rp)</Label><Input id="employee-tpp" type="number" min={0} value={employeeForm.tpp_basic} onChange={(event) => setEmployeeForm((current) => ({ ...current, tpp_basic: Number(event.target.value) }))} /></div><div className="field"><Label htmlFor="employee-class">Kelas jabatan (1–15)</Label><Input id="employee-class" type="number" min={1} max={15} value={employeeForm.job_class} onChange={(event) => setEmployeeForm((current) => ({ ...current, job_class: Number(event.target.value) }))} /></div><div className="field"><Label>Status</Label><Select value={employeeForm.status} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, status: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Aktif">Aktif</SelectItem><SelectItem value="Cuti">Cuti</SelectItem><SelectItem value="Nonaktif">Nonaktif</SelectItem></SelectContent></Select></div></div>{employeeBirth && <div className="derived-details"><div><span>TANGGAL LAHIR</span><strong>{formatDate(employeeBirth.birthDate)}</strong></div><div><span>USIA SAAT INI</span><strong>{(() => { const age = ageParts(employeeBirth.birthDate, today); return `${age.years} th ${age.months} bln`; })()}</strong></div><div><span>BATAS USIA PENSIUN</span><strong>{retirementAge(employeeForm.retirement_category)} tahun</strong></div><div><span>PERKIRAAN TMT PENSIUN</span><strong>{formatDate(retirementDate(employeeBirth.birthDate, employeeForm.retirement_category))}</strong></div></div>}<DialogFooter><Button type="button" variant="outline" onClick={() => setDialog(null)}>Batal</Button><Button type="submit" disabled={busy || (employeeForm.nip.length === 18 && !employeeBirth)}>{busy ? "Menyimpan…" : selectedEmployee ? "Simpan perubahan" : "Simpan pegawai"}</Button></DialogFooter></form></DialogContent></Dialog>
+      <Dialog open={dialog === "employee"} onOpenChange={(open) => !open && setDialog(null)}><DialogContent className="simpeg-dialog"><DialogHeader><DialogTitle>{selectedEmployee ? "Perbarui data pegawai" : "Tambah pegawai"}</DialogTitle><DialogDescription>Informasi NIP, jabatan, unit kerja, masa kerja, dan gaji pokok.</DialogDescription></DialogHeader><form onSubmit={saveEmployee} className="dialog-form"><div className="form-grid"><div className="field" style={{ maxWidth: "100px" }}><Label htmlFor="employee-no-urut">No. Urut</Label><Input id="employee-no-urut" type="number" min={1} value={employeeForm.no_urut ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, no_urut: event.target.value ? Number(event.target.value) : undefined }))} placeholder="1" /></div><div className="field" style={{ flex: 1 }}><Label htmlFor="employee-nip">NIP · 18 digit</Label><Input id="employee-nip" inputMode="numeric" maxLength={18} value={employeeForm.nip} onChange={(event) => { let val = event.target.value.replace(/\D/g, ""); if (val.length === 19 && val.endsWith("0001")) { val = val.slice(0, 15) + "001"; } let autoBirth = employeeForm.birth_date; if (val.length >= 8) { autoBirth = `${val.slice(0, 4)}-${val.slice(4, 6)}-${val.slice(6, 8)}`; } setEmployeeForm((current) => ({ ...current, nip: val.slice(0, 18), birth_date: autoBirth })); }} required pattern="[0-9]{18}" placeholder="199005152019031005" /></div><div className="field" style={{ maxWidth: "170px" }}><Label htmlFor="employee-birth-date">Tanggal lahir</Label><Input id="employee-birth-date" type="date" value={employeeForm.birth_date ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, birth_date: event.target.value || null }))} /></div></div>{employeeForm.nip.length === 18 && (employeeBirth ? <div className="nip-preview"><Check size={14} /><span>{formatDate(employeeForm.birth_date || employeeBirth.birthDate)} · {employeeBirth.gender} · TMT {new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(employeeBirth.appointmentYear, employeeBirth.appointmentMonth - 1, 1)))}</span></div> : <div className="nip-preview nip-invalid"><X size={14} />NIP tidak valid. Periksa kembali 18 digitnya.</div>)}<div className="field"><Label htmlFor="employee-name">Nama lengkap</Label><Input id="employee-name" value={employeeForm.name} onChange={(event) => setEmployeeForm((current) => ({ ...current, name: event.target.value }))} required /></div><div className="form-grid"><div className="field"><Label htmlFor="employee-position">Nama jabatan</Label><Input id="employee-position" value={employeeForm.position} onChange={(event) => setEmployeeForm((current) => ({ ...current, position: event.target.value }))} placeholder="Perencana Ahli Muda" /></div><div className="field"><Label>Unit kerja / Bidang</Label><Select value={employeeForm.unit_kerja ?? "Sekretariat"} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, unit_kerja: value }))}><SelectTrigger><SelectValue placeholder="Pilih unit kerja / bidang" /></SelectTrigger><SelectContent>{BIDANG_LIST.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent></Select></div></div><div className="form-grid"><div className="field"><Label htmlFor="employee-rank">Pangkat</Label><Input id="employee-rank" value={employeeForm.rank} onChange={(event) => setEmployeeForm((current) => ({ ...current, rank: event.target.value }))} /></div><div className="field"><Label htmlFor="employee-grade">Golongan</Label><Input id="employee-grade" value={employeeForm.grade} onChange={(event) => setEmployeeForm((current) => ({ ...current, grade: event.target.value }))} placeholder="III/a" /></div><div className="field"><Label>Jenis jabatan</Label><Select value={employeeForm.jenis_jabatan ?? "Struktural"} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, jenis_jabatan: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Setruktural">Struktural</SelectItem><SelectItem value="Fungsional Tertentu">Fungsional Tertentu</SelectItem><SelectItem value="Fungsional  Umum">Fungsional Umum</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="employee-edu">Pendidikan terakhir</Label><Input id="employee-edu" value={employeeForm.pendidikan_terakhir ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, pendidikan_terakhir: event.target.value }))} placeholder="S2 / S1 / D3 / SMA" /></div><div className="field"><Label>Jenis pegawai</Label><Select value={employeeForm.employment_type} onValueChange={(value: "PNS" | "PPPK") => setEmployeeForm((current) => ({ ...current, employment_type: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PNS">PNS</SelectItem><SelectItem value="PPPK">PPPK</SelectItem></SelectContent></Select></div><div className="field"><Label>Kategori batas usia</Label><Select value={employeeForm.retirement_category} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, retirement_category: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="administrasi">Administrasi / ahli pertama</SelectItem><SelectItem value="pimpinan_tinggi">Pimpinan tinggi</SelectItem><SelectItem value="ahli_madya">Fungsional ahli madya</SelectItem><SelectItem value="ahli_utama">Fungsional ahli utama</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="employee-rank-tmt">TMT pangkat terakhir</Label><Input id="employee-rank-tmt" type="date" value={employeeForm.last_rank_tmt ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, last_rank_tmt: event.target.value || null }))} /></div><div className="field"><Label htmlFor="employee-kgb-tmt">TMT KGB terakhir</Label><Input id="employee-kgb-tmt" type="date" value={employeeForm.last_kgb_tmt ?? ""} onChange={(event) => setEmployeeForm((current) => ({ ...current, last_kgb_tmt: event.target.value || null }))} /></div><div className="field"><Label htmlFor="employee-salary">Gaji pokok (Rp)</Label><Input id="employee-salary" type="number" min={0} value={employeeForm.base_salary} onChange={(event) => setEmployeeForm((current) => ({ ...current, base_salary: Number(event.target.value) }))} /></div><div className="field"><Label htmlFor="employee-tpp">Pagu dasar TPP (Rp)</Label><Input id="employee-tpp" type="number" min={0} value={employeeForm.tpp_basic} onChange={(event) => setEmployeeForm((current) => ({ ...current, tpp_basic: Number(event.target.value) }))} /></div><div className="field"><Label htmlFor="employee-class">Kelas jabatan (1–15)</Label><Input id="employee-class" type="number" min={1} max={15} value={employeeForm.job_class} onChange={(event) => setEmployeeForm((current) => ({ ...current, job_class: Number(event.target.value) }))} /></div><div className="field"><Label>Status</Label><Select value={employeeForm.status} onValueChange={(value) => setEmployeeForm((current) => ({ ...current, status: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Aktif">Aktif</SelectItem><SelectItem value="Cuti">Cuti</SelectItem><SelectItem value="Nonaktif">Nonaktif</SelectItem></SelectContent></Select></div></div>{(employeeBirth || employeeForm.birth_date) && <div className="derived-details"><div><span>TANGGAL LAHIR</span><strong>{formatDate(employeeForm.birth_date || employeeBirth?.birthDate || "")}</strong></div><div><span>USIA SAAT INI</span><strong>{(() => { const bd = employeeForm.birth_date || employeeBirth?.birthDate; if (!bd) return "—"; const age = ageParts(bd, today); return `${age.years} th ${age.months} bln`; })()}</strong></div><div><span>BATAS USIA PENSIUN</span><strong>{retirementAge(employeeForm.retirement_category)} tahun</strong></div><div><span>PERKIRAAN TMT PENSIUN</span><strong>{(() => { const bd = employeeForm.birth_date || employeeBirth?.birthDate; return bd ? formatDate(retirementDate(bd, employeeForm.retirement_category)) : "—"; })()}</strong></div></div>}<DialogFooter><Button type="button" variant="outline" onClick={() => setDialog(null)}>Batal</Button><Button type="submit" disabled={busy || (employeeForm.nip.length === 18 && !employeeBirth)}>{busy ? "Menyimpan…" : selectedEmployee ? "Simpan perubahan" : "Simpan pegawai"}</Button></DialogFooter></form></DialogContent></Dialog>
 
       <Dialog open={dialog === "family"} onOpenChange={(open) => !open && setDialog(null)}><DialogContent className="simpeg-dialog"><DialogHeader><DialogTitle>Tambah tanggungan keluarga</DialogTitle><DialogDescription>Lengkapi data sesuai dokumen administrasi keluarga.</DialogDescription></DialogHeader><form onSubmit={saveFamily} className="dialog-form"><div className="field"><Label>Pegawai</Label><Select value={familyForm.employee_id} onValueChange={(value) => setFamilyForm((current) => ({ ...current, employee_id: value }))}><SelectTrigger><SelectValue placeholder="Pilih pegawai" /></SelectTrigger><SelectContent>{employees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name}</SelectItem>)}</SelectContent></Select></div><div className="field"><Label htmlFor="family-name">Nama anggota keluarga</Label><Input id="family-name" value={familyForm.name} onChange={(event) => setFamilyForm((current) => ({ ...current, name: event.target.value }))} required /></div><div className="form-grid"><div className="field"><Label>Hubungan</Label><Select value={familyForm.relationship} onValueChange={(value: "pasangan" | "anak") => setFamilyForm((current) => ({ ...current, relationship: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pasangan">Suami / istri</SelectItem><SelectItem value="anak">Anak</SelectItem></SelectContent></Select></div><div className="field"><Label htmlFor="family-birth">Tanggal lahir</Label><Input id="family-birth" type="date" value={familyForm.birth_date} onChange={(event) => setFamilyForm((current) => ({ ...current, birth_date: event.target.value }))} required /></div></div>{familyForm.relationship === "pasangan" ? <label className="toggle-line"><input type="checkbox" checked={familyForm.is_asn} onChange={(event) => setFamilyForm((current) => ({ ...current, is_asn: event.target.checked }))} /><span><strong>Pasangan berstatus ASN</strong><small>Mencegah klaim tunjangan ganda</small></span><span className={`fake-switch ${familyForm.is_asn ? "switch-on" : ""}`} /></label> : <><div className="field"><Label>Status perkawinan anak</Label><Select value={familyForm.marital_status} onValueChange={(value) => setFamilyForm((current) => ({ ...current, marital_status: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="belum_menikah">Belum menikah</SelectItem><SelectItem value="menikah">Sudah menikah</SelectItem></SelectContent></Select></div><label className="toggle-line"><input type="checkbox" checked={familyForm.is_working} onChange={(event) => setFamilyForm((current) => ({ ...current, is_working: event.target.checked }))} /><span><strong>Anak telah bekerja</strong><small>Anak bekerja tidak memenuhi syarat</small></span><span className={`fake-switch ${familyForm.is_working ? "switch-on" : ""}`} /></label><label className="toggle-line"><input type="checkbox" checked={familyForm.student_certificate} onChange={(event) => setFamilyForm((current) => ({ ...current, student_certificate: event.target.checked }))} /><span><strong>Surat keterangan kuliah tersedia</strong><small>Untuk anak di atas 21 sampai 25 tahun</small></span><span className={`fake-switch ${familyForm.student_certificate ? "switch-on" : ""}`} /></label></>}<DialogFooter><Button type="button" variant="outline" onClick={() => setDialog(null)}>Batal</Button><Button type="submit" disabled={busy || !familyForm.employee_id}>{busy ? "Menyimpan…" : "Simpan tanggungan"}</Button></DialogFooter></form></DialogContent></Dialog>
 
@@ -968,6 +1027,7 @@ function EmployeeTable({ employees, logs, onEdit, onDelete, compact = false }: {
               {!compact && <th style={{ width: "48px", textAlign: "center" }}>NO</th>}
               <th>PEGAWAI</th>
               <th>NIP</th>
+              {!compact && <th>TANGGAL LAHIR</th>}
               <th>PANGKAT / GOL.</th>
               {!compact && <><th>JABATAN &amp; UNIT</th><th>STATUS</th></>}
               <th>TMT TERAKHIR</th>
@@ -994,6 +1054,21 @@ function EmployeeTable({ employees, logs, onEdit, onDelete, compact = false }: {
                     </div>
                   </td>
                   <td className="mono-cell">{employee.nip}</td>
+                  {!compact && (
+                    <td>
+                      {(() => {
+                        const bdate = employee.birth_date || (employee.nip.length >= 8 ? `${employee.nip.slice(0, 4)}-${employee.nip.slice(4, 6)}-${employee.nip.slice(6, 8)}` : null);
+                        if (!bdate) return <span>—</span>;
+                        const age = ageParts(bdate, TODAY());
+                        return (
+                          <div>
+                            <strong>{formatDate(bdate)}</strong>
+                            <small className="table-secondary">{age.years} tahun</small>
+                          </div>
+                        );
+                      })()}
+                    </td>
+                  )}
                   <td>
                     <strong>{employee.rank || "—"}</strong>
                     <small className="table-secondary">Golongan {employee.grade}{employee.pendidikan_terakhir ? ` · ${employee.pendidikan_terakhir}` : ""}</small>
